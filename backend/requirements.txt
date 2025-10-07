@@ -8,3 +8,4 @@ opencv-python
 timm
 gunicorn
 requests
+gdown
