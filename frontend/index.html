@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bone Age Predictor</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            padding: 40px;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 600px;
+            width: 100%;
+        }
+
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+
+        .upload-area {
+            border: 3px dashed #667eea;
+            border-radius: 10px;
+            padding: 40px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+            background: #f8f9ff;
+        }
+
+        .upload-area:hover {
+            border-color: #764ba2;
+            background: #f0f2ff;
+        }
+
+        .upload-area.dragover {
+            background: #e8ebff;
+            border-color: #764ba2;
+            transform: scale(1.02);
+        }
+
+        .upload-icon {
+            font-size: 48px;
+            margin-bottom: 10px;
+        }
+
+        input[type="file"] {
+            display: none;
+        }
+
+        .preview-container {
+            margin: 20px 0;
+            text-align: center;
+            display: none;
+        }
+
+        .preview-image {
+            max-width: 100%;
+            max-height: 300px;
+            border-radius: 10px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+
+        .file-info {
+            margin-top: 10px;
+            color: #666;
+            font-size: 14px;
+        }
+
+        button {
+            width: 100%;
+            padding: 15px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-top: 20px;
+            transition: all 0.3s;
+        }
+
+        button:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+            display: none;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .result {
+            margin-top: 20px;
+            padding: 25px;
+            background: linear-gradient(135deg, #e0f7fa 0%, #e1bee7 100%);
+            border-radius: 10px;
+            text-align: center;
+            display: none;
+            animation: slideIn 0.5s ease;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .result h2 {
+            color: #667eea;
+            font-size: 32px;
+            margin-bottom: 10px;
+        }
+
+        .result p {
+            color: #555;
+            margin: 5px 0;
+            font-size: 16px;
+        }
+
+        .result.error {
+            background: linear-gradient(135deg, #ffebee 0%, #ffcdd2 100%);
+        }
+
+        .result.error h2 {
+            color: #c62828;
+        }
+
+        .clear-btn {
+            background: #9e9e9e;
+            margin-top: 10px;
+        }
+
+        .clear-btn:hover {
+            background: #757575;
+        }
+
+        .status {
+            text-align: center;
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 14px;
+            display: none;
+        }
+
+        .status.connected {
+            background: #c8e6c9;
+            color: #2e7d32;
+            display: block;
+        }
+
+        .status.disconnected {
+            background: #ffcdd2;
+            color: #c62828;
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🦴 Bone Age Predictor</h1>
+        <p class="subtitle">Upload a palm X-ray to predict bone age</p>
+
+        <div class="upload-area" id="uploadArea">
+            <div class="upload-icon">📤</div>
+            <p><strong>Click or drag & drop</strong></p>
+            <p style="font-size: 14px; color: #888; margin-top: 5px;">Upload X-ray image (PNG, JPG, JPEG)</p>
+            <input type="file" id="fileInput" accept="image/*">
+        </div>
+
+        <div class="preview-container" id="previewContainer">
+            <img id="preview" class="preview-image" alt="Preview">
+            <div class="file-info" id="fileInfo"></div>
+        </div>
+
+        <button id="predictBtn" disabled>🔮 Predict Bone Age</button>
+        <button id="clearBtn" class="clear-btn" style="display: none;">🗑️ Clear & Upload New</button>
+
+        <div class="loader" id="loader"></div>
+
+        <div class="result" id="result"></div>
+
+        <div class="status" id="status"></div>
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:5001';
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        const preview = document.getElementById('preview');
+        const previewContainer = document.getElementById('previewContainer');
+        const fileInfo = document.getElementById('fileInfo');
+        const predictBtn = document.getElementById('predictBtn');
+        const clearBtn = document.getElementById('clearBtn');
+        const loader = document.getElementById('loader');
+        const result = document.getElementById('result');
+        const status = document.getElementById('status');
+
+        let selectedFile = null;
+
+        // Check server connection on load
+        checkServerConnection();
+
+        async function checkServerConnection() {
+            try {
+                const response = await fetch(`${API_URL}/health`);
+                if (response.ok) {
+                    status.className = 'status connected';
+                    status.textContent = '✓ Connected to server';
+                } else {
+                    throw new Error('Server not responding');
+                }
+            } catch (error) {
+                status.className = 'status disconnected';
+                status.textContent = '✗ Server not connected. Make sure backend is running on port 5001!';
+            }
+        }
+
+        // Click to upload
+        uploadArea.addEventListener('click', () => fileInput.click());
+
+        // Drag and drop handlers
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                handleFile(files[0]);
+            }
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                handleFile(e.target.files[0]);
+            }
+        });
+
+        function handleFile(file) {
+            // Validate file type
+            if (!file.type.startsWith('image/')) {
+                alert('Please upload an image file!');
+                return;
+            }
+
+            selectedFile = file;
+
+            // Show preview
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                preview.src = e.target.result;
+                previewContainer.style.display = 'block';
+                fileInfo.textContent = `${file.name} (${(file.size / 1024).toFixed(2)} KB)`;
+                predictBtn.disabled = false;
+                clearBtn.style.display = 'block';
+                uploadArea.style.display = 'none';
+            };
+            reader.readAsDataURL(file);
+
+            result.style.display = 'none';
+        }
+
+        predictBtn.addEventListener('click', async () => {
+            if (!selectedFile) return;
+
+            const formData = new FormData();
+            formData.append('file', selectedFile);
+
+            predictBtn.disabled = true;
+            loader.style.display = 'block';
+            result.style.display = 'none';
+
+            try {
+                const response = await fetch(`${API_URL}/predict`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.success) {
+                    result.className = 'result';
+                    result.innerHTML = `
+                        <h2>${data.predicted_age_months.toFixed(1)} months</h2>
+                        <p><strong>Approximately ${data.predicted_age_years.toFixed(1)} years old</strong></p>
+                        <p style="font-size: 14px; color: #888; margin-top: 10px;">Device: ${data.device_used}</p>
+                    `;
+                } else {
+                    result.className = 'result error';
+                    result.innerHTML = `
+                        <h2>⚠️ Error</h2>
+                        <p>${data.error || 'Prediction failed'}</p>
+                    `;
+                }
+
+                result.style.display = 'block';
+            } catch (error) {
+                result.className = 'result error';
+                result.innerHTML = `
+                    <h2>⚠️ Connection Error</h2>
+                    <p>Could not connect to the server.</p>
+                    <p style="font-size: 14px;">Make sure the backend is running on port 5001</p>
+                `;
+                result.style.display = 'block';
+            } finally {
+                loader.style.display = 'none';
+                predictBtn.disabled = false;
+            }
+        });
+
+        clearBtn.addEventListener('click', () => {
+            selectedFile = null;
+            fileInput.value = '';
+            previewContainer.style.display = 'none';
+            uploadArea.style.display = 'block';
+            clearBtn.style.display = 'none';
+            predictBtn.disabled = true;
+            result.style.display = 'none';
+        });
+    </script>
+</body>
+</html>
