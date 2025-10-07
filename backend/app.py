@@ -9,25 +9,23 @@ import cv2
 import numpy as np
 import timm
 import os
-import requests
 import gdown
+import gc
 
 app = Flask(__name__)
 CORS(app)
 
 # Configuration
 MODEL_PATH = 'seresnet50_final_best.pth'
-GDRIVE_FILE_ID = '1i4JMTJ7Rx6eJ5AH6ZahBxaWYpiDGMWjj'  # Your Google Drive file ID
+GDRIVE_FILE_ID = '1i4JMTJ7Rx6eJ5AH6ZahBxaWYpiDGMWjj'
 
-# Set device (deployment compatible)
-if torch.cuda.is_available():
-    device = torch.device('cuda')
-elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
-    device = torch.device('mps')  # Apple Silicon GPU
-else:
-    device = torch.device('cpu')
-
+# Force CPU and optimize for low memory
+device = torch.device('cpu')
+torch.set_num_threads(1)  # Reduce thread overhead
 print(f"Using device: {device}")
+
+# Global model variable (lazy loading)
+model = None
 
 
 def download_model_from_gdrive():
@@ -47,102 +45,87 @@ def download_model_from_gdrive():
         print("✓ Model downloaded successfully!")
     except Exception as e:
         print(f"✗ Error downloading model: {e}")
-        print("Trying alternative method...")
-
-        # Alternative method using requests
-        try:
-            download_url = f"https://drive.google.com/uc?export=download&id={GDRIVE_FILE_ID}"
-            session = requests.Session()
-            response = session.get(download_url, stream=True)
-
-            # Handle large file download confirmation
-            for key, value in response.cookies.items():
-                if key.startswith('download_warning'):
-                    download_url = f"https://drive.google.com/uc?export=download&confirm={value}&id={GDRIVE_FILE_ID}"
-                    response = session.get(download_url, stream=True)
-
-            # Save file
-            with open(MODEL_PATH, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=32768):
-                    if chunk:
-                        f.write(chunk)
-
-            print("✓ Model downloaded successfully (alternative method)!")
-        except Exception as e2:
-            print(f"✗ Failed to download model: {e2}")
-            raise
+        raise
 
 
-def load_model(model_path, device):
-    """Load the trained SEResNet50 model"""
+def load_model_optimized(model_path, device):
+    """Load model with aggressive memory optimization"""
     print(f"Loading model from: {model_path}")
-
-    # Create the model - same way as in training
+    
+    # Clear memory before loading
+    gc.collect()
+    
+    # Create model
     model = timm.create_model('seresnet50', pretrained=False)
     model.reset_classifier(1)
-
-    # Load the saved state dict
-    state_dict = torch.load(model_path, map_location=device, weights_only=False)
-
-    # Handle DataParallel wrapper if present
+    
+    # Load state dict with memory mapping
+    print("Loading weights...")
+    state_dict = torch.load(
+        model_path, 
+        map_location=device,
+        weights_only=False
+    )
+    
+    # Handle DataParallel wrapper
     new_state_dict = {}
     for k, v in state_dict.items():
-        if k.startswith('module.'):
-            new_state_dict[k[7:]] = v  # Remove 'module.' prefix
-        else:
-            new_state_dict[k] = v
-
-    # Load weights
+        key = k[7:] if k.startswith('module.') else k
+        new_state_dict[key] = v
+    
+    # Load weights and clean up immediately
     model.load_state_dict(new_state_dict)
+    del state_dict, new_state_dict
+    gc.collect()
+    
+    # Move to device and set to eval mode
     model.to(device)
     model.eval()
-
+    
+    # Freeze all parameters to save memory
+    for param in model.parameters():
+        param.requires_grad = False
+    
     print("✓ Model loaded successfully!")
     return model
 
 
-# Download and load model at startup
-print("=" * 60)
-print("🚀 Starting Bone Age Prediction Server")
-print("=" * 60)
+def get_model():
+    """Lazy load model on first request"""
+    global model
+    if model is None:
+        print("First request - initializing model...")
+        download_model_from_gdrive()
+        model = load_model_optimized(MODEL_PATH, device)
+        gc.collect()
+    return model
 
-# Download model if needed
-download_model_from_gdrive()
 
-# Load model
-model = load_model(MODEL_PATH, device)
-print("=" * 60)
-
-# Image preprocessing - EXACTLY as in your training code
+# Image preprocessing transforms
 transform = T.Compose([
-    T.Resize((512, 512)),  # Same as training
+    T.Resize((512, 512)),
     T.ToTensor(),
-    T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])  # ImageNet normalization
+    T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 ])
 
 
 def preprocess_image(image):
-    """
-    Preprocess image with CLAHE - exactly as in training
-    """
-    # Convert PIL to numpy array
+    """Preprocess image with CLAHE"""
+    # Convert PIL to numpy
     img = np.array(image)
-
-    # Convert to grayscale if not already
+    
+    # Convert to grayscale if needed
     if len(img.shape) == 3:
         img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-
-    # Apply CLAHE (Contrast Limited Adaptive Histogram Equalization)
+    
+    # Apply CLAHE
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     img = clahe.apply(img)
-
-    # Convert back to RGB (3 channels)
+    
+    # Convert back to RGB
     img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
-
-    # Convert back to PIL Image
-    img = Image.fromarray(img)
-
-    return img
+    
+    return Image.fromarray(img)
 
 
 @app.route('/', methods=['GET'])
@@ -179,6 +162,9 @@ def predict():
         return jsonify({'success': False, 'error': 'No file selected'}), 400
 
     try:
+        # Get model (lazy load on first request)
+        current_model = get_model()
+        
         # Read image
         image_bytes = file.read()
         img = Image.open(io.BytesIO(image_bytes))
@@ -189,7 +175,7 @@ def predict():
 
         print(f"Original image: {img.size}, mode: {img.mode}")
 
-        # Apply CLAHE preprocessing (same as training)
+        # Apply CLAHE preprocessing
         img = preprocess_image(img)
         print("✓ CLAHE preprocessing applied")
 
@@ -199,8 +185,12 @@ def predict():
 
         # Predict
         with torch.no_grad():
-            output = model(img_tensor)
+            output = current_model(img_tensor)
             predicted_age_months = output.squeeze().item()
+
+        # Clean up tensors immediately
+        del img_tensor, output
+        gc.collect()
 
         print(f"✓ Prediction: {predicted_age_months:.2f} months")
 
@@ -240,7 +230,8 @@ if __name__ == '__main__':
     print("🦴 Bone Age Prediction Server (SEResNet50)")
     print("=" * 60)
     print(f"Device: {device}")
-    print(f"Model: SEResNet50")
+    print(f"Model: SEResNet50 (Lazy Loading)")
+    print(f"Memory Optimization: Enabled")
     print(f"Server: http://0.0.0.0:{port}")
     print("=" * 60)
     print("\nEndpoints:")
@@ -249,6 +240,8 @@ if __name__ == '__main__':
     print("  GET  /test      - Test endpoint")
     print("  POST /predict   - Predict bone age")
     print("=" * 60)
+    print("\n⚠️  Note: Model loads on first prediction request")
+    print("=" * 60)
 
     # Use 0.0.0.0 to allow external connections
-    app.run(debug=False, host='0.0.0.0', port=port)
+    app.run(debug=False, host='0.0.0.0', port=port, threaded=False)
