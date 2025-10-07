@@ -9,22 +9,68 @@ import cv2
 import numpy as np
 import timm
 import os
+import requests
+import gdown
 
 app = Flask(__name__)
 CORS(app)
 
 # Configuration
 MODEL_PATH = 'seresnet50_final_best.pth'
+GDRIVE_FILE_ID = '1i4JMTJ7Rx6eJ5AH6ZahBxaWYpiDGMWjj'  # Your Google Drive file ID
 
-# Set device (Mac compatible)
+# Set device (deployment compatible)
 if torch.cuda.is_available():
     device = torch.device('cuda')
-elif torch.backends.mps.is_available():
+elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
     device = torch.device('mps')  # Apple Silicon GPU
 else:
     device = torch.device('cpu')
 
 print(f"Using device: {device}")
+
+
+def download_model_from_gdrive():
+    """Download model from Google Drive if not present"""
+    if os.path.exists(MODEL_PATH):
+        print(f"✓ Model already exists at {MODEL_PATH}")
+        return
+
+    print("=" * 60)
+    print("📥 Downloading model from Google Drive...")
+    print("=" * 60)
+
+    try:
+        # Use gdown to download from Google Drive
+        url = f'https://drive.google.com/uc?id={GDRIVE_FILE_ID}'
+        gdown.download(url, MODEL_PATH, quiet=False)
+        print("✓ Model downloaded successfully!")
+    except Exception as e:
+        print(f"✗ Error downloading model: {e}")
+        print("Trying alternative method...")
+
+        # Alternative method using requests
+        try:
+            download_url = f"https://drive.google.com/uc?export=download&id={GDRIVE_FILE_ID}"
+            session = requests.Session()
+            response = session.get(download_url, stream=True)
+
+            # Handle large file download confirmation
+            for key, value in response.cookies.items():
+                if key.startswith('download_warning'):
+                    download_url = f"https://drive.google.com/uc?export=download&confirm={value}&id={GDRIVE_FILE_ID}"
+                    response = session.get(download_url, stream=True)
+
+            # Save file
+            with open(MODEL_PATH, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=32768):
+                    if chunk:
+                        f.write(chunk)
+
+            print("✓ Model downloaded successfully (alternative method)!")
+        except Exception as e2:
+            print(f"✗ Failed to download model: {e2}")
+            raise
 
 
 def load_model(model_path, device):
@@ -55,10 +101,15 @@ def load_model(model_path, device):
     return model
 
 
-# Load model at startup
+# Download and load model at startup
 print("=" * 60)
 print("🚀 Starting Bone Age Prediction Server")
 print("=" * 60)
+
+# Download model if needed
+download_model_from_gdrive()
+
+# Load model
 model = load_model(MODEL_PATH, device)
 print("=" * 60)
 
@@ -100,7 +151,8 @@ def home():
         'message': 'Bone Age Prediction API',
         'status': 'running',
         'model': 'SEResNet50',
-        'device': str(device)
+        'device': str(device),
+        'version': '1.0.0'
     })
 
 
@@ -109,7 +161,9 @@ def health():
     return jsonify({
         'status': 'healthy',
         'device': str(device),
-        'model_loaded': model is not None
+        'model_loaded': model is not None,
+        'model_path': MODEL_PATH,
+        'model_exists': os.path.exists(MODEL_PATH)
     })
 
 
@@ -117,12 +171,12 @@ def health():
 def predict():
     # Check if file is present
     if 'file' not in request.files:
-        return jsonify({'error': 'No file uploaded'}), 400
+        return jsonify({'success': False, 'error': 'No file uploaded'}), 400
 
     file = request.files['file']
 
     if file.filename == '':
-        return jsonify({'error': 'No file selected'}), 400
+        return jsonify({'success': False, 'error': 'No file selected'}), 400
 
     try:
         # Read image
@@ -187,7 +241,7 @@ if __name__ == '__main__':
     print("=" * 60)
     print(f"Device: {device}")
     print(f"Model: SEResNet50")
-    print(f"Server: http://localhost:{port}")
+    print(f"Server: http://0.0.0.0:{port}")
     print("=" * 60)
     print("\nEndpoints:")
     print("  GET  /          - API info")
