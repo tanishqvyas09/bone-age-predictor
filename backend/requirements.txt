@@ -7,4 +7,3 @@ numpy
 opencv-python
 timm
 gunicorn
-requests
